@@ -135,8 +135,8 @@ object MDE extends App {
     relation_num = relationcache.size()
     var entityEmbed = scala.collection.mutable.Map[Int, DenseMatrix[Double]]()
     var relationEmbed = scala.collection.mutable.Map[Int, DenseMatrix[Double]]()
-    createEmbedMatrixMap(entityEmbed, entity_num, true)
-    createEmbedMatrixMap(relationEmbed, relation_num, false)
+    createEmbedMatrixMap(entityEmbed, entity_num)
+    createEmbedMatrixMap(relationEmbed, relation_num)
     println("embeddings created " + java.time.LocalDateTime.now())
     val tripleNr = populateTrainingTriplesCache("/WN18/train.txt", tripleIDs, filterCache, entitycache, relationcache)
     println(" Train triples read")
@@ -176,29 +176,20 @@ object MDE extends App {
     bw.close()
   }
 
-  def createEmbedMap(mapName: Map[Int, DenseVector[Double]], entriesNr: Int, normalize: Boolean) {
-    for (i <- 0 until entriesNr) {
-      var temp: DenseVector[Double] = DenseVector.zeros[Double](n)
-      for (ii <- 0 until n)
-        temp(ii) = randn(0, 1.0 / n, -6 / sqrt(n), 6 / sqrt(n))
-      if (normalize) temp = norm(temp)
-      mapName += (i -> temp)
-    }
-  }
-
-  def createEmbedMatrixMap(mapName: Map[Int, DenseMatrix[Double]], entriesNr: Int, normalize: Boolean) {
+  def createEmbedMatrixMap(mapName: Map[Int, DenseMatrix[Double]], entriesNr: Int) {
     for (i <- 0 until entriesNr) {
       var embedd: DenseMatrix[Double] = breeze.linalg.DenseMatrix.zeros[Double](8, n)
       for (k <- 0 until 8) {
         var temp: DenseVector[Double] = breeze.linalg.DenseVector.zeros[Double](n)
-        for (ii <- 0 until n)
-          temp(ii) = randn(0, 1.0 / n, -6 / sqrt(n), 6 / sqrt(n))
-        if (normalize) temp = norm(temp)
+          val randGaussian = breeze.stats.distributions.Gaussian(0, 1)
+          temp = DenseVector.rand(n, randGaussian)
+        }
         embedd(k, ::) := temp.t
       }
       mapName += (i -> embedd)
     }
   }
+
   def rand(min: Double, max: Double): Double = {
     val RAND_MAX = 0x7fffffff
     var r = min + (max - min) * scala.util.Random.nextInt() / (RAND_MAX + 1.0)

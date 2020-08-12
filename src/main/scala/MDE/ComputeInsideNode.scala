@@ -144,8 +144,8 @@ class ComputeInsideNode(entityCache: Map[Int, DenseMatrix[Double]], relationCach
     gradHead(4, ::) := gA4.t * beta
     gradHead(1, ::) := gB1.t * beta
     gradHead(5, ::) := gB5.t * beta
-    gradHead(2, ::) := gC2.t * beta
-    gradHead(6, ::) := gC6.t * beta
+    gradHead(2, ::) := gC2.t * beta * (-1.0)
+    gradHead(6, ::) := gC6.t * beta * (-1.0)
     gradHead(3, ::) := gD3._1.t * beta
     gradHead(7, ::) := gD7._1.t * beta
 
@@ -196,8 +196,8 @@ class ComputeInsideNode(entityCache: Map[Int, DenseMatrix[Double]], relationCach
   def loss(posScore: Double, negScore: Double): Tuple3[Double, Double, Double] = {
     var lambda_pos: Double = gamma_p - delta_p
     var lambda_neg: Double = gamma_n - delta_n
-    var pos_loss: Double = max(0.0, ((posScore - lambda_pos) + margin))
-    var neg_loss: Double = max(0.0, ((negScore - lambda_neg) * (-1.0) + margin))
+    var pos_loss: Double = max(0.0, ((posScore - lambda_pos) * (-1.0) + margin))
+    var neg_loss: Double = max(0.0, ((negScore - lambda_neg)  + margin))
     var loss: Double = beta1 * pos_loss + beta2 * neg_loss
 
     (loss, pos_loss, neg_loss)
@@ -215,7 +215,7 @@ class ComputeInsideNode(entityCache: Map[Int, DenseMatrix[Double]], relationCach
     if (posScore != 0)
       gradient(trueTriple, true, beta1, entity_tmp, relation_tmp)
     if (negScore != 0)
-      gradient(falseTriple, true, beta2, entity_tmp, relation_tmp)
+      gradient(falseTriple, false, beta2, entity_tmp, relation_tmp)
     res += totLoss
     resP += posLoss
     resN += negLoss
