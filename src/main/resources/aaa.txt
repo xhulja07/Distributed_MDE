@@ -1,0 +1,6 @@
+head	0
+headd	1
+headdd	2
+tail	3
+taill	4
+tailll	5

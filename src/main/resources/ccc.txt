@@ -1,0 +1,3 @@
+head	tail	rel
+headd	taill	rell
+headdd	tailll	relll
