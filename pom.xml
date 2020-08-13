@@ -169,7 +169,7 @@
 				<volumes>
 			      	<volume>/vol/transe-results</volume>
 			    	</volumes>
-			    <mainClass>TransE_C</mainClass>
+			    <mainClass>MDE</mainClass>
  			    <environment>
 			        <IGNITE_HOME>/ignite</IGNITE_HOME>
 			    </environment>
