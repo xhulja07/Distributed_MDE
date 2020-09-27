@@ -38,15 +38,21 @@ import java.util.UUID
 import org.apache.ignite.messaging.MessagingListenActor
 import scala.collection.JavaConversions._
 
-class ComputeInsideNode(entityCache: Map[Int, DenseVector[Double]], relationCache: Map[Int, DenseVector[Double]], variables: Map[String, String]) {
+class ComputeInsideNode(entityCache: Map[Int, DenseMatrix[Double]], relationCache: Map[Int, DenseMatrix[Double]], variables: Map[String, String]) {
 
   var dimNum = Integer.parseInt(variables("dim_num"))
   var batchsize = Integer.parseInt(variables("batchsize"))
   var margin = variables("margin").toDouble
   var rate = variables("rate").toDouble
   var batchesPerNode = Integer.parseInt(variables("batchesPerNode"))
+  var updateGamma = variables("updateGamma").toBoolean
+  var gamma_p = variables("gamma_p").toDouble
+  var gamma_n = variables("gamma_n").toDouble
+  var delta_p = variables("delta_p").toDouble
+  var delta_n = variables("delta_n").toDouble
+  var beta1: Double = variables("beta1").toDouble
+  var beta2: Double = variables("beta2").toDouble
 
-  val L1_flag = true
   /** Type alias. */
   type Cache = IgniteCache[JavaString, JavaInt]
   type CacheFilter = IgniteCache[TripleID, Int]
@@ -59,231 +65,177 @@ class ComputeInsideNode(entityCache: Map[Int, DenseVector[Double]], relationCach
     return res
   }
 
-  def sqr(x: Double): Double = {
-    return x * x
-  }
+  def calc_score(triple: TripleID): Double = {
+    var score: Double = 0.0
+    var psi: Double = 1.2
 
-  def calc_sum(triple: TripleID): Double = {
-    var sum: Double = 0
     var head = entityCache(triple.head)
     var tail = entityCache(triple.tail)
     var rel = relationCache(triple.rel)
-    if (L1_flag)
-      for (i <- 0 until dimNum)
-        sum += math.abs(tail(i) - head(i) - rel(i))
-    else
-      for (i <- 0 until dimNum)
-        sum += sqr(tail(i) - head(i) - rel(i))
 
-    return sum
+    var row0 = head(0, ::).t + rel(0, ::).t - tail(0, ::).t
+    var row4 = head(4, ::).t + rel(4, ::).t - tail(4, ::).t
+    var a = (norm(row0) + norm(row4)) / 2
+
+    var row1 = head(1, ::).t + tail(1, ::).t - rel(1, ::).t
+    var row5 = head(5, ::).t + tail(5, ::).t - rel(5, ::).t
+    var b = (norm(row1) + norm(row5)) / 2
+
+    var row2 = rel(2, ::).t + tail(2, ::).t - head(2, ::).t
+    var row6 = rel(6, ::).t + tail(6, ::).t - head(6, ::).t
+    var c = (norm(row2) + norm(row6)) / 2
+
+    var row3 = head(3, ::).t - rel(3, ::).t * tail(3, ::).t
+    var row7 = head(7, ::).t - rel(7, ::).t * tail(7, ::).t
+    var d = (norm(row3) + norm(row7)) / 2
+
+    score = (1.5 * a + 3 * b + 1.5 * c + 3 * d) / 9.0 - psi
+
+    return score
   }
 
-  def calc_score4DistMult(triple: TripleID): Double = {
-    var res: Double = 0
+  def gradA(h: DenseVector[Double], t: DenseVector[Double], r: DenseVector[Double]): DenseVector[Double] = {
+    var grad: DenseVector[Double] = (h + r - t) * 1.5 / 9.0
+    grad
+
+  }
+
+  def gradB(h: DenseVector[Double], t: DenseVector[Double], r: DenseVector[Double]): DenseVector[Double] = {
+    var grad: DenseVector[Double] = (h + t - r) * 3.0 / 9.0 
+    grad
+
+  }
+
+  def gradC(h: DenseVector[Double], t: DenseVector[Double], r: DenseVector[Double]): DenseVector[Double] = {
+
+    var grad: DenseVector[Double] = (r + t - h) * 1.5 / 9.0
+    grad
+
+  }
+
+  def gradD(h: DenseVector[Double], t: DenseVector[Double], r: DenseVector[Double]): Tuple3[DenseVector[Double], DenseVector[Double], DenseVector[Double]] = {
+
+    var gradH: DenseVector[Double] = (h - r * t) * 3.0 / 9.0 
+    var gradR: DenseVector[Double] = (h - r * t) * (-t) * 3.0 / 9.0 
+    var gradT: DenseVector[Double] = (h - r * t) * (-r) * 3.0 / 9.0 
+    (gradH, gradR, gradT)
+
+  }
+
+  def gradient(triple: TripleID, trueTriple: Boolean, beta: Double, entity_tmp: Map[Int, DenseMatrix[Double]], relation_tmp: Map[Int, DenseMatrix[Double]]) {
     var head = entityCache(triple.head)
     var tail = entityCache(triple.tail)
     var rel = relationCache(triple.rel)
-  
-    for (i <- 0 until dimNum) {
-      res += (head(i) *  tail(i) * rel(i))
-    }
+    
+    var gradHead :DenseMatrix[Double] = DenseMatrix.zeros(8, dimNum)
+    var gradRel :DenseMatrix[Double] = DenseMatrix.zeros(8, dimNum)
+    var gradTail :DenseMatrix[Double] = DenseMatrix.zeros(8, dimNum)
 
-    return res
+    var gA0 = gradA(head(0, ::).t, tail(0, ::).t, rel(0, ::).t)
+    var gA4 = gradA(head(4, ::).t, tail(4, ::).t, rel(4, ::).t)
+    var gB1 = gradB(head(1, ::).t, tail(1, ::).t, rel(1, ::).t)
+    var gB5 = gradB(head(5, ::).t, tail(5, ::).t, rel(5, ::).t)
+    var gC2 = gradC(head(2, ::).t, tail(2, ::).t, rel(2, ::).t)
+    var gC6 = gradC(head(6, ::).t, tail(6, ::).t, rel(6, ::).t)
+    var gD3 = gradD(head(3, ::).t, tail(3, ::).t, rel(3, ::).t)
+    var gD7 = gradD(head(7, ::).t, tail(7, ::).t, rel(7, ::).t)
+
+    gradHead(0, ::) := gA0.t * beta
+    gradHead(4, ::) := gA4.t * beta
+    gradHead(1, ::) := gB1.t * beta
+    gradHead(5, ::) := gB5.t * beta
+    gradHead(2, ::) := gC2.t * beta * (-1.0)
+    gradHead(6, ::) := gC6.t * beta * (-1.0)
+    gradHead(3, ::) := gD3._1.t * beta
+    gradHead(7, ::) := gD7._1.t * beta
+
+    gradRel(0, ::) := gA0.t * beta
+    gradRel(4, ::) := gA4.t * beta
+    gradRel(1, ::) := gB1.t * beta * (-1.0)
+    gradRel(5, ::) := gB5.t * beta * (-1.0)
+    gradRel(2, ::) := gC2.t * beta
+    gradRel(6, ::) := gC6.t * beta
+    gradRel(3, ::) := gD3._2.t * beta
+    gradRel(7, ::) := gD7._2.t * beta
+
+    gradTail(0, ::) := gA0.t * beta * (-1.0)
+    gradTail(4, ::) := gA4.t * beta * (-1.0)
+    gradTail(1, ::) := gB1.t * beta
+    gradTail(5, ::) := gB5.t * beta
+    gradTail(2, ::) := gC2.t * beta
+    gradTail(6, ::) := gC6.t * beta
+    gradTail(3, ::) := gD3._3.t * beta
+    gradTail(7, ::) := gD7._3.t * beta
+
+    if (!entity_tmp.contains(triple.head))
+      entity_tmp.put(triple.head, DenseMatrix.zeros[Double](8, dimNum))
+    if (!entity_tmp.contains(triple.tail))
+      entity_tmp.put(triple.tail, DenseMatrix.zeros[Double](8, dimNum))
+    if (!relation_tmp.contains(triple.rel))
+      relation_tmp.put(triple.rel, DenseMatrix.zeros[Double](8, dimNum))
+
+    if (!trueTriple) rate = rate * -1.0
+    //    println("gradients for head:" + gradHead)
+    //    println("gradients for tail:" + gradTail)
+    //    println("gradients for rel:" + gradRel)
+
+    var h = entity_tmp(triple.head)
+    var hNew = h + gradHead * rate
+    entity_tmp.put(triple.head, hNew)
+
+    var t = entity_tmp(triple.tail)
+    var tNew = t + gradTail * rate 
+    entity_tmp.put(triple.tail, tNew)
+
+    var r = relation_tmp(triple.rel)
+    var rNew = r + gradRel * rate 
+    relation_tmp.put(triple.rel, rNew)
+
   }
 
-  def regul_func(triple: TripleID): Double = {
-    var sum: Double = 0
-    var head = entityCache(triple.head)
-    var tail = entityCache(triple.tail)
-    var rel = relationCache(triple.rel)
-    for (i <- 0 until dimNum) {
-      sum += (head(i) * head(i) + tail(i) * tail(i) + rel(i) * rel(i)) / 3
-    }
+  def loss(posScore: Double, negScore: Double): Tuple3[Double, Double, Double] = {
+    var lambda_pos: Double = gamma_p - delta_p
+    var lambda_neg: Double = gamma_n - delta_n
+    var pos_loss: Double = max(0.0, ((posScore - lambda_pos) * (-1.0) + margin))
+    var neg_loss: Double = max(0.0, ((negScore - lambda_neg)  + margin))
+    var loss: Double = beta1 * pos_loss + beta2 * neg_loss
 
-    sum
+    (loss, pos_loss, neg_loss)
   }
 
-  def sign(nr: Double): Double = {
-    var r: Double = 0
-    if (nr > 0)
-      r = 1
-    else
-      r = -1
-    r
-  }
-
-  def vec_length(a: DenseVector[Double]): Double = {
+  def train(trueTriple: TripleID, falseTriple: TripleID, entity_tmp: Map[Int, DenseMatrix[Double]], relation_tmp: Map[Int, DenseMatrix[Double]]): Tuple3[Double, Double, Double] = {
     var res: Double = 0
-    for (i <- 0 until a.size)
-      res += a(i) * a(i)
-    res = sqr(res)
-    return res
+    var resP: Double = 0
+    var resN: Double = 0
+    var posScore = calc_score(trueTriple)
+    //println("positive score " + posScore)
+    var negScore = calc_score(falseTriple)
+    var (totLoss, posLoss, negLoss) = loss(posScore, negScore)
+    // println("positive loss " + posLoss)
+    if (posScore != 0)
+      gradient(trueTriple, true, beta1, entity_tmp, relation_tmp)
+    if (negScore != 0)
+      gradient(falseTriple, false, beta2, entity_tmp, relation_tmp)
+    res += totLoss
+    resP += posLoss
+    resN += negLoss
+
+    (res, resP, resN)
   }
 
-  def gradient(trueTriple: TripleID, falseTriple: TripleID, entity_tmp: Map[Int, DenseVector[Double]], relation_tmp: Map[Int, DenseVector[Double]]) {
-    var head = entityCache(trueTriple.head)
-    var tail = entityCache(trueTriple.tail)
-    var rel = relationCache(trueTriple.rel)
-    var headF = entityCache(falseTriple.head)
-    var tailF = entityCache(falseTriple.tail)
-    var relF = relationCache(falseTriple.rel)
-    var gradTrue: DenseVector[Double] = DenseVector.zeros[Double](dimNum)
-    for (i <- 0 until dimNum)
-      gradTrue(i) = (tail(i) - head(i) - rel(i)) * 2.0
-    if (L1_flag)
-      gradTrue.map(i => { sign(i) })
-
-    if (!entity_tmp.contains(trueTriple.head))
-      entity_tmp.put(trueTriple.head, DenseVector.zeros[Double](dimNum))
-    if (!entity_tmp.contains(trueTriple.tail))
-      entity_tmp.put(trueTriple.tail, DenseVector.zeros[Double](dimNum))
-    if (!relation_tmp.contains(trueTriple.rel))
-      relation_tmp.put(trueTriple.rel, DenseVector.zeros[Double](dimNum))
-
-    if (trueTriple.head == falseTriple.head) {
-      if (!entity_tmp.contains(falseTriple.tail))
-        entity_tmp.put(falseTriple.tail, DenseVector.zeros[Double](dimNum))
-    } else {
-      if (!entity_tmp.contains(falseTriple.head))
-        entity_tmp.put(falseTriple.head, DenseVector.zeros[Double](dimNum))
-    }
-
-    var h = entity_tmp(trueTriple.head) + gradTrue * rate
-    entity_tmp.put(trueTriple.head, h)
-
-    var t = entity_tmp(trueTriple.tail) - gradTrue * rate
-    entity_tmp.put(trueTriple.tail, t)
-
-    var r = relation_tmp(trueTriple.rel) + gradTrue * rate
-    relation_tmp.put(trueTriple.rel, r)
-
-    var gradFalse: DenseVector[Double] = (tailF - headF - relF) * 2.0
-    if (L1_flag)
-      gradFalse.map(i => { sign(i) })
-
-    var hF = entity_tmp(falseTriple.head) - gradFalse * rate
-    entity_tmp.put(falseTriple.head, hF)
-
-    var tF = entity_tmp(falseTriple.tail) + gradFalse * rate
-    entity_tmp.put(falseTriple.tail, tF)
-
-    var rF = relation_tmp(falseTriple.rel) - gradFalse * rate
-    relation_tmp.put(falseTriple.rel, rF)
-  }
-
-  def createRelationMatrix(rel: DenseVector[Double]): DenseMatrix[Double] = {
-
-    val relDenseMatrix = DenseMatrix.zeros[Double](dimNum, dimNum)
-    for (i <- 0 until dimNum)
-      relDenseMatrix(i, i) = rel(i)
-
-    relDenseMatrix
-  }
-
-  def gradient4DistMult(trueTriple: TripleID, falseTriple: TripleID, entity_tmp: Map[Int, DenseVector[Double]], relation_tmp: Map[Int, DenseVector[Double]]) {
-    var head = entityCache(trueTriple.head)
-    var tail = entityCache(trueTriple.tail)
-    var rel = relationCache(trueTriple.rel)
-
-    var headF = entityCache(falseTriple.head)
-    var tailF = entityCache(falseTriple.tail)
-    var relF = relationCache(falseTriple.rel)
-
-    //update the temporary embeddings maps
-    if (!entity_tmp.contains(trueTriple.head))
-      entity_tmp.put(trueTriple.head, DenseVector.zeros[Double](dimNum))
-    if (!entity_tmp.contains(trueTriple.tail))
-      entity_tmp.put(trueTriple.tail, DenseVector.zeros[Double](dimNum))
-    if (!relation_tmp.contains(trueTriple.rel))
-      relation_tmp.put(trueTriple.rel, DenseVector.zeros[Double](dimNum))
-
-    if (trueTriple.head == falseTriple.head) {
-      if (!entity_tmp.contains(falseTriple.tail))
-        entity_tmp.put(falseTriple.tail, DenseVector.zeros[Double](dimNum))
-    } else {
-      if (!entity_tmp.contains(falseTriple.head))
-        entity_tmp.put(falseTriple.head, DenseVector.zeros[Double](dimNum))
-    }
-
-    var gradTrueH: DenseVector[Double] = DenseVector.zeros[Double](dimNum)
-    var gradTrueT: DenseVector[Double] = DenseVector.zeros[Double](dimNum)
-    var gradTrueR: DenseVector[Double] = DenseVector.zeros[Double](dimNum)
-
-    for (i <- 0 until dimNum) {
-      gradTrueH(i) = tail(i) * rel(i)
-      gradTrueT(i) = head(i) * rel(i)
-      gradTrueR(i) = tail(i) * head(i)
-
-      //      gradTrueH(i) = (head(i) * tail(i) * rel(i)) * tail(i) * rel(i) * 2
-      //      gradTrueT(i) = (head(i) * tail(i) * rel(i)) * head(i) * rel(i) * 2
-      //      gradTrueR(i) = (head(i) * tail(i) * rel(i)) * tail(i) * head(i) * 2
-    }
-    var regulator: Double = regul_func(trueTriple) * 0.005
-
-    var gradT: DenseVector[Double] = gradTrueH + gradTrueT + gradTrueR
-    gradT = gradT * rate
-
-    var h = entity_tmp(trueTriple.head) + gradTrueH * rate 
-    entity_tmp.put(trueTriple.head, h)
-
-    var t = entity_tmp(trueTriple.tail) - gradTrueT * rate 
-    entity_tmp.put(trueTriple.tail, t)
-
-    var r = relation_tmp(trueTriple.rel) + gradTrueR * rate 
-    relation_tmp.put(trueTriple.rel, r)
-
-    var gradFalseH: DenseVector[Double] = DenseVector.zeros[Double](dimNum)
-    var gradFalseT: DenseVector[Double] = DenseVector.zeros[Double](dimNum)
-    var gradFalseR: DenseVector[Double] = DenseVector.zeros[Double](dimNum)
-
-    for (i <- 0 until dimNum) {
-      //      gradFalseH(i) = (headF(i) * tailF(i) * relF(i)) * tailF(i) * relF(i) * 2
-      //      gradFalseT(i) = (headF(i) * tailF(i) * relF(i)) * headF(i) * relF(i) * 2
-      //      gradFalseR(i) = (headF(i) * tailF(i) * relF(i)) * tailF(i) * headF(i) * 2
-      gradFalseH(i) = tailF(i) * relF(i)
-      gradFalseT(i) = headF(i) * relF(i)
-      gradFalseR(i) = tailF(i) * headF(i)
-    }
-
-    var regulatorF: Double = regul_func(falseTriple) * 0.005
-    var gradF: DenseVector[Double] = gradFalseH + gradFalseT + gradFalseR
-    gradT = gradT * rate
-
-    var hF = entity_tmp(falseTriple.head) - gradFalseH * rate
-    entity_tmp.put(falseTriple.head, hF)
-
-    var tF = entity_tmp(falseTriple.tail) + gradFalseT * rate 
-    entity_tmp.put(falseTriple.tail, tF)
-
-    var rF = relation_tmp(falseTriple.rel) - gradFalseR * rate
-    relation_tmp.put(falseTriple.rel, rF)
-  }
-
-  def train_kb(trueTriple: TripleID, falseTriple: TripleID, entity_tmp: Map[Int, DenseVector[Double]], relation_tmp: Map[Int, DenseVector[Double]]): Double = {
-    var res: Double = 0
-    var trueDist = calc_score4DistMult(trueTriple)
-    var FalseDist = calc_score4DistMult(falseTriple)
-    if (trueDist + margin > FalseDist) {
-      res += margin + trueDist - FalseDist
-      //      gradient(trueTriple, falseTriple, entity_tmp, relation_tmp)
-      gradient4DistMult(trueTriple, falseTriple, entity_tmp, relation_tmp)
-
-    }
-
-    res
-  }
-
-  def computeInsideNode(): Tuple3[Double, Map[Int, DenseVector[Double]], Map[Int, DenseVector[Double]]] = {
+  def computeInsideNode(): Tuple5[Double, Map[Int, DenseMatrix[Double]], Map[Int, DenseMatrix[Double]], Double, Double] = {
     val remoteIgnite = Ignition.localIgnite()
     var trainingTriplesCache: IgniteCache[JavaInt, TripleID] = remoteIgnite.cache("tripleIde");
     var existingTriplesCache: IgniteCache[TripleID, JavaInt] = remoteIgnite.cache("allTriplesCache");
-    var entity_tmp: Map[Int, DenseVector[Double]] = Map.empty[Int, DenseVector[Double]]
-    var relation_tmp: Map[Int, DenseVector[Double]] = Map.empty[Int, DenseVector[Double]]
+    var entity_tmp: Map[Int, DenseMatrix[Double]] = Map.empty[Int, DenseMatrix[Double]]
+    var relation_tmp: Map[Int, DenseMatrix[Double]] = Map.empty[Int, DenseMatrix[Double]]
     var entity_num = entityCache.size
     var relation_num = relationCache.size
     var triple_num = trainingTriplesCache.size()
 
     var totRes: Double = 0
+    var totResPos: Double = 0
+    var totResNeg: Double = 0
     for (batch <- 0 until batchesPerNode) {
       for (i <- 0 until batchsize) {
         var id = rand_max(triple_num)
@@ -294,18 +246,26 @@ class ComputeInsideNode(entityCache: Map[Int, DenseVector[Double]], relationCach
           while (randomEntity == triple.tail || existingTriplesCache.get(new TripleID(triple.head, randomEntity, triple.rel)) != null) {
             randomEntity = rand_max(entity_num)
           }
-          if (!entity_tmp.contains(randomEntity))
-            totRes += train_kb(triple, new TripleID(triple.head, randomEntity, triple.rel), entity_tmp, relation_tmp)
+          if (!entity_tmp.contains(randomEntity)) {
+            var temp = train(triple, new TripleID(triple.head, randomEntity, triple.rel), entity_tmp, relation_tmp)
+            totRes += temp._1
+            totResPos += temp._2
+            totResNeg += temp._3
+          }
         } else {
           while (randomEntity == triple.head || existingTriplesCache.get(new TripleID(randomEntity, triple.tail, triple.rel)) != null) {
             randomEntity = rand_max(entity_num)
           }
-          if (!entity_tmp.contains(randomEntity))
-            totRes += train_kb(triple, new TripleID(randomEntity, triple.tail, triple.rel), entity_tmp, relation_tmp)
+          if (!entity_tmp.contains(randomEntity)) {
+            var temp = train(triple, new TripleID(randomEntity, triple.tail, triple.rel), entity_tmp, relation_tmp)
+            totRes += temp._1
+            totResPos += temp._2
+            totResNeg += temp._3
+          }
         }
       }
     }
-    (totRes, entity_tmp, relation_tmp)
+    (totRes, entity_tmp, relation_tmp, totResPos, totResNeg)
   }
 
 }

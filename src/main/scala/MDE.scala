@@ -69,8 +69,8 @@ object MDE extends App {
   var entity_num = 0
   var relation_num = 0
   var testTriples = 0
-  var gamma_p: Double = 1.9 // change the values
-  var gamma_n: Double = 1.9 
+  var gamma_p: Double = 1.9
+  var gamma_n: Double = 1.9
   var delta_p: Double = 0.0
   var delta_n: Double = 0.0
   var beta1: Double = 1.0
@@ -135,8 +135,8 @@ object MDE extends App {
     relation_num = relationcache.size()
     var entityEmbed = scala.collection.mutable.Map[Int, DenseMatrix[Double]]()
     var relationEmbed = scala.collection.mutable.Map[Int, DenseMatrix[Double]]()
-    createEmbedMatrixMap(entityEmbed, entity_num, true)
-    createEmbedMatrixMap(relationEmbed, relation_num, false)
+    createEmbedMatrixMap(entityEmbed, entity_num)
+    createEmbedMatrixMap(relationEmbed, relation_num)
     println("embeddings created " + java.time.LocalDateTime.now())
     val tripleNr = populateTrainingTriplesCache("/WN18/train.txt", tripleIDs, filterCache, entitycache, relationcache)
     println(" Train triples read")
@@ -158,7 +158,7 @@ object MDE extends App {
     relationEmbed.clear()
     var testStart = java.time.LocalDateTime.now()
 
-    computeTest(entityEmbed, relationEmbed, testTripleIDsCache, filtercache)
+   // computeTest(entityEmbed, relationEmbed, testTripleIDsCache, filtercache)
     println("Test started at: " + testStart + " and ended at:" + java.time.LocalDateTime.now())
 
   }
@@ -176,29 +176,19 @@ object MDE extends App {
     bw.close()
   }
 
-  def createEmbedMap(mapName: Map[Int, DenseVector[Double]], entriesNr: Int, normalize: Boolean) {
-    for (i <- 0 until entriesNr) {
-      var temp: DenseVector[Double] = DenseVector.zeros[Double](n)
-      for (ii <- 0 until n)
-        temp(ii) = randn(0, 1.0 / n, -6 / sqrt(n), 6 / sqrt(n))
-      if (normalize) temp = norm(temp)
-      mapName += (i -> temp)
-    }
-  }
-
-  def createEmbedMatrixMap(mapName: Map[Int, DenseMatrix[Double]], entriesNr: Int, normalize: Boolean) {
+  def createEmbedMatrixMap(mapName: Map[Int, DenseMatrix[Double]], entriesNr: Int) {
     for (i <- 0 until entriesNr) {
       var embedd: DenseMatrix[Double] = breeze.linalg.DenseMatrix.zeros[Double](8, n)
       for (k <- 0 until 8) {
         var temp: DenseVector[Double] = breeze.linalg.DenseVector.zeros[Double](n)
-        for (ii <- 0 until n)
-          temp(ii) = randn(0, 1.0 / n, -6 / sqrt(n), 6 / sqrt(n))
-        if (normalize) temp = norm(temp)
+          val randGaussian = breeze.stats.distributions.Gaussian(0, 1)
+          temp = DenseVector.rand(n, randGaussian)
         embedd(k, ::) := temp.t
       }
       mapName += (i -> embedd)
     }
   }
+
   def rand(min: Double, max: Double): Double = {
     val RAND_MAX = 0x7fffffff
     var r = min + (max - min) * scala.util.Random.nextInt() / (RAND_MAX + 1.0)
@@ -350,7 +340,7 @@ object MDE extends App {
       if (update_gamma) {
         update_limits(loss_p_per_triple, loss_n_per_triple)
       }
-      //      bw.write("epoch " + epoch + " loss: " + res + "\n")
+      bw.write("epoch " + epoch + " loss: " + res + "\n")
       println("epoch " + epoch + " loss: " + res)
       println("epoch " + epoch + " loss_per_triple: " + loss_per_triple)
       println("epoch " + epoch + " loss_positive_per_triple: " + loss_p_per_triple)
@@ -387,74 +377,72 @@ object MDE extends App {
     })
   }
 
-  def computeTest(entityCache: Map[Int, DenseMatrix[Double]], relationCache: Map[Int, DenseMatrix[Double]], testT: TriplesCache, filterC: CacheFilter) {
-    var sumRank4head = 0
-    var sumRank4headFiltered = 0
-    var sumRank4tail = 0
-    var sumRank4tailFiltered = 0
-    var countHits4head = 0
-    var countHits4tail = 0
-    var countHits4headFiltered = 0
-    var countHits4tailFiltered = 0
-    var variables = Map[String, String]()
-    variables += ("dim_num" -> n.toString())
-    variables += ("hit" -> hitAt.toString())
-    var start = java.time.LocalDateTime.now()
-    var testcalls: Collection[IgniteCallable[Map[String, Int]]] = new ArrayList
-    var testChunks = (0 until testTriples).toList.grouped(1000)
-    testChunks.foreach(chunk => {
-      testcalls.add(() => {
-        val nodeid = ignite$.cluster().localNode.id
-        // println("computing triples at node: " + nodeid)
-        var inNode = new Test(entityCache, relationCache, variables)
-        var singletestRes = inNode.testSingleTriple(chunk)
-        singletestRes
-      })
-    })
-    var testRes = Ignition.ignite().compute().call(testcalls)
-    for (testresult <- testRes.asScala) {
-      countHits4head += testresult("countHits4head")
-      countHits4headFiltered += testresult("countHits4headFiltered")
-      sumRank4head += testresult("sumRank4head")
-      sumRank4headFiltered += testresult("sumRank4headFiltered")
-      countHits4tail += testresult("countHits4tail")
-      countHits4tailFiltered += testresult("countHits4tailFiltered")
-      sumRank4tail += testresult("sumRank4tail")
-      sumRank4tailFiltered += testresult("sumRank4tailFiltered")
-    }
-    var finish = java.time.LocalDateTime.now()
-    println("start: " + start + " end:" + finish)
-    val bw = new BufferedWriter(new FileWriter("testResults.txt"))
-    bw.write("dim " + n + ", rate " + rate + ", margin " + margin)
-    bw.write("Hit@" + hitAt + " raw for head is: " + countHits4head * 100 / testTriples + "% \n")
-    bw.write("Hit@" + hitAt + " raw for tail is: " + countHits4tail * 100 / testTriples + "% \n")
-    bw.write("Hit@" + hitAt + " filtered for head is: " + countHits4headFiltered * 100 / testTriples + "% \n")
-    bw.write("Hit@" + hitAt + " filtered for tail is: " + countHits4tailFiltered * 100 / testTriples + "% \n")
-    bw.write("*************************************************************************")
-    bw.write(" MR for head: " + sumRank4head / testTriples + " \n")
-    bw.write(" MR for tail: " + sumRank4tail / testTriples + " \n")
-    bw.write(" MR for head filtered: " + sumRank4headFiltered / testTriples + " \n")
-    bw.write(" MR for tail filtered: " + sumRank4tailFiltered / testTriples + " \n")
-    bw.write("*************************************************************************")
-    bw.close()
-
-    println("dim " + n + ", rate " + rate + ", margin " + margin)
-    println("Hit@" + hitAt + " raw for head is: " + Math.round(countHits4head * 100 / testTriples) + "% ")
-    println("Hit@" + hitAt + " raw for tail is: " + Math.round(countHits4tail * 100 / testTriples) + "% ")
-    println("Hit@" + hitAt + " filtered for head is: " + Math.round(countHits4headFiltered * 100 / testTriples) + "% ")
-    println("Hit@" + hitAt + " filtered for tail is: " + Math.round(countHits4tailFiltered * 100 / testTriples) + "% ")
-    println("*************************************************************************")
-    println(" MR for head: " + Math.round(sumRank4head / testTriples))
-    println(" MR for tail: " + Math.round(sumRank4tail / testTriples))
-    println(" MR for head filtered: " + Math.round(sumRank4headFiltered / testTriples))
-    println(" MR for tail filtered: " + Math.round(sumRank4tailFiltered / testTriples))
-    println("*************************************************************************")
-  }
-
+//  def computeTest(entityCache: Map[Int, DenseMatrix[Double]], relationCache: Map[Int, DenseMatrix[Double]], testT: TriplesCache, filterC: CacheFilter) {
+//    var sumRank4head = 0
+//    var sumRank4headFiltered = 0
+//    var sumRank4tail = 0
+//    var sumRank4tailFiltered = 0
+//    var countHits4head = 0
+//    var countHits4tail = 0
+//    var countHits4headFiltered = 0
+//    var countHits4tailFiltered = 0
+//    var variables = Map[String, String]()
+//    variables += ("dim_num" -> n.toString())
+//    variables += ("hit" -> hitAt.toString())
+//    var start = java.time.LocalDateTime.now()
+//    var testcalls: Collection[IgniteCallable[Map[String, Int]]] = new ArrayList
+//    var testChunks = (0 until testTriples).toList.grouped(1000)
+//    testChunks.foreach(chunk => {
+//      testcalls.add(() => {
+//        val nodeid = ignite$.cluster().localNode.id
+//        // println("computing triples at node: " + nodeid)
+//        var inNode = new Test(entityCache, relationCache, variables)
+//        var singletestRes = inNode.testSingleTriple(chunk)
+//        singletestRes
+//      })
+//    })
+//    var testRes = Ignition.ignite().compute().call(testcalls)
+//    for (testresult <- testRes.asScala) {
+//      countHits4head += testresult("countHits4head")
+//      countHits4headFiltered += testresult("countHits4headFiltered")
+//      sumRank4head += testresult("sumRank4head")
+//      sumRank4headFiltered += testresult("sumRank4headFiltered")
+//      countHits4tail += testresult("countHits4tail")
+//      countHits4tailFiltered += testresult("countHits4tailFiltered")
+//      sumRank4tail += testresult("sumRank4tail")
+//      sumRank4tailFiltered += testresult("sumRank4tailFiltered")
+//    }
+//    var finish = java.time.LocalDateTime.now()
+//    println("start: " + start + " end:" + finish)
+//    val bw = new BufferedWriter(new FileWriter("testResults.txt"))
+//    bw.write("dim " + n + ", rate " + rate + ", margin " + margin)
+//    bw.write("Hit@" + hitAt + " raw for head is: " + countHits4head * 100 / testTriples + "% \n")
+//    bw.write("Hit@" + hitAt + " raw for tail is: " + countHits4tail * 100 / testTriples + "% \n")
+//    bw.write("Hit@" + hitAt + " filtered for head is: " + countHits4headFiltered * 100 / testTriples + "% \n")
+//    bw.write("Hit@" + hitAt + " filtered for tail is: " + countHits4tailFiltered * 100 / testTriples + "% \n")
+//    bw.write("*************************************************************************")
+//    bw.write(" MR for head: " + sumRank4head / testTriples + " \n")
+//    bw.write(" MR for tail: " + sumRank4tail / testTriples + " \n")
+//    bw.write(" MR for head filtered: " + sumRank4headFiltered / testTriples + " \n")
+//    bw.write(" MR for tail filtered: " + sumRank4tailFiltered / testTriples + " \n")
+//    bw.write("*************************************************************************")
+//    bw.close()
+//
+//    println("dim " + n + ", rate " + rate + ", margin " + margin)
+//    println("Hit@" + hitAt + " raw for head is: " + Math.round(countHits4head * 100 / testTriples) + "% ")
+//    println("Hit@" + hitAt + " raw for tail is: " + Math.round(countHits4tail * 100 / testTriples) + "% ")
+//    println("Hit@" + hitAt + " filtered for head is: " + Math.round(countHits4headFiltered * 100 / testTriples) + "% ")
+//    println("Hit@" + hitAt + " filtered for tail is: " + Math.round(countHits4tailFiltered * 100 / testTriples) + "% ")
+//    println("*************************************************************************")
+//    println(" MR for head: " + Math.round(sumRank4head / testTriples))
+//    println(" MR for tail: " + Math.round(sumRank4tail / testTriples))
+//    println(" MR for head filtered: " + Math.round(sumRank4headFiltered / testTriples))
+//    println(" MR for tail filtered: " + Math.round(sumRank4tailFiltered / testTriples))
+//    println("*************************************************************************")
+//  }
 }
 class TripleID(var head: Int, var tail: Int, var rel: Int)
 class readDataset() {
 
 }
-
 
