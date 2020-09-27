@@ -64,7 +64,7 @@ object MDE extends App {
   val margin = 1.0
   val method = 0
   val nbatches = 100
-  val nepoch = 3600
+  val nepoch = 2
   var rate = 0.01
   var entity_num = 0
   var relation_num = 0
@@ -103,7 +103,7 @@ object MDE extends App {
     calls.add(() => {
       val smtr = dataStreamer$[JavaString, Int](entityCache, 2048)
       var lineNr: Int = 0
-      val stream: InputStream = getClass.getResourceAsStream("/WN18/entity2id.txt")
+      val stream: InputStream = getClass.getResourceAsStream("/data/WN18/entity2id.txt")
       for (line <- Source.fromInputStream(stream).getLines()) {
         lineNr += 1
         val res = line.split("\t")
@@ -117,7 +117,7 @@ object MDE extends App {
     calls.add(() => {
       val smtr = dataStreamer$[JavaString, Int](relationCache, 2048)
       var lineNr: Int = 0
-      val stream: InputStream = getClass.getResourceAsStream("/WN18/relation2id.txt")
+      val stream: InputStream = getClass.getResourceAsStream("/data/WN18/relation2id.txt")
       for (line <- Source.fromInputStream(stream).getLines()) {
         lineNr += 1
         val res = line.split("\t")
@@ -138,11 +138,11 @@ object MDE extends App {
     createEmbedMatrixMap(entityEmbed, entity_num)
     createEmbedMatrixMap(relationEmbed, relation_num)
     println("embeddings created " + java.time.LocalDateTime.now())
-    val tripleNr = populateTrainingTriplesCache("/WN18/train.txt", tripleIDs, filterCache, entitycache, relationcache)
+    val tripleNr = populateTrainingTriplesCache("/data/WN18/train.txt", tripleIDs, filterCache, entitycache, relationcache)
     println(" Train triples read")
-    val validTriples = populateTrainingTriplesCache("/WN18/valid.txt", tripleIDs, filterCache, entitycache, relationcache)
+    val validTriples = populateTrainingTriplesCache("/data/WN18/valid.txt", tripleIDs, filterCache, entitycache, relationcache)
     println(" Valid triples read")
-    testTriples = populateTestCache("/WN18/test.txt", testCache, entitycache, relationcache)
+    testTriples = populateTestCache("/data/WN18/test.txt", testCache, entitycache, relationcache)
     println(" Test triples read")
     println("Triple cache created: " + java.time.LocalDateTime.now())
     entitycache.destroy()

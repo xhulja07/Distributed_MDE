@@ -1,11 +1,11 @@
 <project xmlns="https://maven.apache.org/POM/4.0.0" xmlns:xsi="https://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="https://maven.apache.org/POM/4.0.0 https://maven.apache.org/maven-v4_0_0.xsd">
     <modelVersion>4.0.0</modelVersion>
-	<artifactId>TransE</artifactId>
+	<artifactId>MDE</artifactId>
 	<groupId>org.xhulja</groupId>
 	<version>0.0.1</version>
-	<name>TransE</name>
-	<description>Scala implementation of TransE</description>
+	<name>MDE</name>
+	<description>Scala implementation of MDE</description>
     <inceptionYear>2019</inceptionYear>
     <repositories>
         <repository>
@@ -161,15 +161,15 @@
                 <artifactId>jib-maven-plugin</artifactId>
     		<version>2.1.0</version>
                  <configuration>
-	          <to><image>transe</image></to>
+	          <to><image>mde</image></to>
 		  <from>
 		    <image>gcr.io/distroless/java:debug</image>
 		  </from>
 			 <container>
 				<volumes>
-			      	<volume>/vol/transe-results</volume>
+			      	<volume>/vol/mde-results</volume>
 			    	</volumes>
-			    <mainClass>TransE_C</mainClass>
+			    <mainClass>MDE</mainClass>
  			    <environment>
 			        <IGNITE_HOME>/ignite</IGNITE_HOME>
 			    </environment>
