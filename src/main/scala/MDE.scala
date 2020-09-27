@@ -43,7 +43,7 @@ import org.apache.ignite.configuration.IgniteConfiguration
 import scala.collection.mutable.Map
 
 object MDE extends App {
-  private val CONFIG = "example-ignite.xml"
+  private val CONFIG = "src/main/scala/example-ignite.xml"
   // Ignition.setClientMode(true)
 
   /** Cache names. */
