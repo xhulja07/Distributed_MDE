@@ -1,8 +1,0 @@
-dimSize = 50
-l rate = 0.01
-marign = 1.0
-nBatches = 100
-~~~~~~~~~~~~~~~~~~~~~~~~ Training results ~~~~~~~~~~~~~~~~~~~~~~~~
-Starting training at  2020-09-27T14:13:13.812epoch 0 loss: 512593.45293468924
-epoch 1 loss: 257001.3554918978
-Finished training at  2020-09-27T14:13:37.647

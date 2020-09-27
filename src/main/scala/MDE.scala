@@ -64,7 +64,7 @@ object MDE extends App {
   val margin = 1.0
   val method = 0
   val nbatches = 100
-  val nepoch = 2
+  val nepoch = 2000
   var rate = 0.01
   var entity_num = 0
   var relation_num = 0
