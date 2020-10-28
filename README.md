@@ -2,8 +2,15 @@
 distributed MDE using a shared memory layer (Apache-Ignite)
 
 
-run:
 
-mvn install package
+to run the model:
 
-mvn exec:java -Dexec.mainClass="MDE"
+$ git clone https://github.com/xhulja07/Distributed_MDE.git
+
+$ cd Distributed_MDE
+
+$ git checkout MDE2.0
+
+$ mvn install package
+
+$ mvn exec:java -Dexec.mainClass="MDE"
